@@ -1,14 +1,107 @@
+import { useEffect, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import Icon from '../../components/Icon.jsx';
+import Problem from '../../components/Problem.jsx';
 import SectionTabs from '../../components/SectionTabs.jsx';
 import TableTop from '../../components/TableTop.jsx';
-import { BRANCH, SECTIONS } from '../../data/restaurant.js';
+import { BRANCH, SECTIONS, STATES } from '../../data/restaurant.js';
 import { useGet } from '../../state/AppContext.jsx';
 
-/** The floor: GET /branches/Baner/tables, every table in its section, laid out as the room is. */
+function Segmented({ label, options, value, onChange }) {
+  return (
+    <div className="segmented" role="group" aria-label={label}>
+      {options.map(([id, text]) => (
+        <button key={id || 'all'} type="button" aria-pressed={value === id}
+          className={`seg${value === id ? ' is-on' : ''}`} onClick={() => onChange(id)}>
+          {text}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * One table, read on its own from GET /branches/Baner/tables/{no} (the number typed in the find box is sent as
+ * text, so a slash or a % in it is still just a table that does not exist). ✕, a click outside or Esc closes it.
+ */
+function TableDrawer({ no, onClose }) {
+  const answer = useGet(`/branches/${BRANCH.code}/tables/${encodeURIComponent(no)}`);
+  const closeRef = useRef(null);
+  const table = answer?.status === 200 ? answer.body : null;
+
+  // The focus moves to ✕ when the drawer opens, and back where it was (the table, or the find box) when it closes.
+  useEffect(() => {
+    const before = document.activeElement;
+    closeRef.current?.focus({ preventScroll: true });
+    return () => before?.focus?.({ preventScroll: true });
+  }, []);
+  // Esc closes the drawer.
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div className="drawer-scrim" onClick={onClose}>
+      <aside className="drawer" role="dialog" aria-modal="true" aria-label={`Table ${no}`} onClick={(e) => e.stopPropagation()}>
+        <header className="drawer-head">
+          <div>
+            <p className="eyebrow">{table ? `${table.section} · ${table.seats} seats` : 'Table'}</p>
+            <h2 className="drawer-title">{no}</h2>
+          </div>
+          <button ref={closeRef} type="button" className="icon-btn" onClick={onClose} aria-label="Close"><Icon name="x" /></button>
+        </header>
+
+        {answer && !table && <Problem answer={answer} facts={{ table: no }} />}
+        {table && (
+          <>
+            <div className="drawer-table"><TableTop table={table} /></div>
+            <dl className="facts">
+              <div><dt>State</dt><dd className={`state-word is-${table.state}`}>{STATES.find((s) => s.id === table.state)?.name}</dd></div>
+              {table.partyId && <div><dt>Party</dt><dd className="mono">{table.partyId}</dd></div>}
+              {table.state === 'seated' && <div><dt>Seated for</dt><dd className="mono">{table.seatedMinutes} min</dd></div>}
+            </dl>
+          </>
+        )}
+      </aside>
+    </div>
+  );
+}
+
+/**
+ * The floor: GET /branches/Baner/tables with the filters as query parameters. The filters live in the
+ * address bar, so a floor can be linked to, and a value the backend refuses shows its refusal.
+ */
 export default function Floor() {
-  const answer = useGet(`/branches/${BRANCH.code}/tables`);
-  const all = answer?.status === 200 ? answer.body.tables : [];
+  const [params, setParams] = useSearchParams();
+  const [selected, setSelected] = useState(null);
+  const [findText, setFindText] = useState('');
+
+  const section = params.get('section') ?? '';
+  const state = params.get('state') ?? '';
+  const query = new URLSearchParams();
+  if (section) query.set('section', section);
+  if (state) query.set('state', state);
+  const base = `/branches/${BRANCH.code}/tables`;
+  const answer = useGet(`${base}${query.toString() ? `?${query}` : ''}`);
+  const everything = useGet(base);
+  const all = everything?.status === 200 ? everything.body.tables : [];
+  const shown = answer?.status === 200 ? answer.body.tables : [];
   const seated = all.filter((t) => t.state === 'seated');
   const longest = seated.reduce((max, t) => Math.max(max, t.seatedMinutes ?? 0), 0);
+
+  function setFilter(name, value) {
+    const next = new URLSearchParams(params);
+    if (value) next.set(name, value);
+    else next.delete(name);
+    setParams(next);
+  }
+  function find(e) {
+    e.preventDefault();
+    const text = findText.trim().toUpperCase();
+    if (text) setSelected(/^\d+$/.test(text) ? `T${text.padStart(2, '0')}` : text);
+  }
 
   return (
     <div className="page is-fit">
@@ -29,10 +122,37 @@ export default function Floor() {
         </div>
       )}
 
-      {answer?.status === 200 && (
+      <div className="toolbar">
+        <Segmented label="Section" value={section} onChange={(v) => setFilter('section', v)}
+          options={[['', 'All sections'], ...SECTIONS.map((s) => [s, s])]} />
+        <Segmented label="State" value={state} onChange={(v) => setFilter('state', v)}
+          options={[['', 'Any state'], ...STATES.map((s) => [s.id, s.name])]} />
+        {(section || state) && answer?.status === 200 && (
+          <p className="filter-count" aria-live="polite">
+            <strong>{shown.length}</strong> shown · <strong className="is-free">{answer.body.free}</strong> free
+          </p>
+        )}
+        <form className="search find-door" onSubmit={find}>
+          <Icon name="search" size={16} />
+          <input value={findText} onChange={(e) => setFindText(e.target.value)} placeholder="Find a table, e.g. T07" aria-label="Table number" />
+        </form>
+      </div>
+
+      {!answer ? null : answer.status !== 200 ? (
+        <Problem answer={answer}>
+          <Link to="/host/floor" className="btn btn-soft problem-action">Show the whole floor</Link>
+        </Problem>
+      ) : shown.length === 0 ? (
+        <div className="empty">
+          <Icon name="grid" size={28} />
+          <p className="empty-title">No table matches these filters</p>
+          <p className="empty-text">Change the section or the state to see more of the floor.</p>
+        </div>
+      ) : (
         <div className="floor">
           {SECTIONS.map((s) => {
-            const tables = all.filter((t) => t.section === s);
+            const tables = shown.filter((t) => t.section === s);
+            if (tables.length === 0) return null;
             return (
               <section key={s} className="floor-section" aria-label={`${s} tables`}>
                 <header className="floor-section-head">
@@ -46,7 +166,7 @@ export default function Floor() {
                   return (
                     <div key={seats} className="floor-row">
                       {row.map((t, i) => (
-                        <TableTop key={t.no} table={t} style={{ '--i': i }} />
+                        <TableTop key={t.no} table={t} selected={t.no === selected} onClick={() => setSelected(t.no)} style={{ '--i': i }} />
                       ))}
                     </div>
                   );
@@ -62,6 +182,10 @@ export default function Floor() {
         <li><span className="dot is-seated" /> Seated</li>
         <li><span className="dot is-uncleared" /> Left, to be cleared</li>
       </ul>
+
+      {selected && (
+        <TableDrawer no={selected} onClose={() => setSelected(null)} />
+      )}
     </div>
   );
 }
