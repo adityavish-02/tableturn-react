@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import Dropdown from '../../components/Dropdown.jsx';
 import Icon from '../../components/Icon.jsx';
 import Problem from '../../components/Problem.jsx';
 import SectionTabs from '../../components/SectionTabs.jsx';
 import TableTop from '../../components/TableTop.jsx';
+import { explain } from '../../data/messages.js';
 import { BRANCH, SECTIONS, STATES } from '../../data/restaurant.js';
-import { useGet } from '../../state/AppContext.jsx';
+import { useApp, useGet, usePartyList } from '../../state/AppContext.jsx';
 
 function Segmented({ label, options, value, onChange }) {
   return (
@@ -17,6 +19,47 @@ function Segmented({ label, options, value, onChange }) {
         </button>
       ))}
     </div>
+  );
+}
+
+/** What an action answered, in the person's words. `facts` names what was acted on, for a refusal's words. */
+function Outcome({ answer, facts, ok }) {
+  if (!answer) return null;
+  if (answer.status < 300) return <p className="drawer-result is-ok"><Icon name="check" size={16} strokeWidth={2.4} /> {ok(answer.body)}</p>;
+  const { title, text } = explain(answer, facts);
+  return <div className="drawer-result is-no"><Icon name="alert" size={16} /><div><strong>{title}</strong><p>{text}</p></div></div>;
+}
+
+/** The host seats a party here: every party can be picked, so each refusal can be reached. */
+function SeatForm({ table }) {
+  const { post } = useApp();
+  const list = usePartyList();
+  const [picked, setPicked] = useState(null);
+  const [answer, setAnswer] = useState(null);
+
+  if (!list) return null;
+  const parties = [...list].sort((a, b) => (a.state === 'waiting' ? 0 : 1) - (b.state === 'waiting' ? 0 : 1));
+  // the first waiting party in line, until another is picked (the list is newest first, so it is the last one waiting)
+  const party = picked ?? parties.filter((p) => p.state === 'waiting').at(-1)?.partyId ?? parties[0]?.partyId ?? '';
+  if (parties.length === 0) {
+    return <p className="drawer-empty">Nobody is on the list yet. <Link to="/host/waitlist">Add a party to the waitlist</Link> to seat them here.</p>;
+  }
+  async function seat(e) {
+    e.preventDefault();
+    setPicked(party);
+    setAnswer(await post('/seatings', { partyId: party, table: table.no }));
+  }
+  return (
+    <form className="drawer-form" onSubmit={seat}>
+      <label className="field-label" htmlFor="seat-party">Seat a party at {table.no}</label>
+      <div className="drawer-form-row">
+        <Dropdown id="seat-party" label="Party to seat" value={party} onChange={(v) => { setPicked(v); setAnswer(null); }}
+          options={parties.map((p) => ({ value: p.partyId, label: `${p.partyId} · ${p.name}`, note: `${p.covers} ${p.covers === 1 ? 'cover' : 'covers'} · ${p.state}` }))} />
+        <button type="submit" className="btn btn-primary">Seat</button>
+      </div>
+      <Outcome answer={answer} facts={{ partyId: party, table: table.no, seats: table.seats, covers: parties.find((p) => p.partyId === party)?.covers }}
+        ok={(b) => `${b.partyId} seated at ${b.table} after waiting ${b.waitedMinutes} min.`} />
+    </form>
   );
 }
 
@@ -35,9 +78,9 @@ function TableDrawer({ no, onClose }) {
     closeRef.current?.focus({ preventScroll: true });
     return () => before?.focus?.({ preventScroll: true });
   }, []);
-  // Esc closes the drawer.
+  // Esc closes the drawer; an Esc that already closed the drop-down inside it is left at that.
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e) => { if (e.key === 'Escape' && !e.defaultPrevented) onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
@@ -62,6 +105,7 @@ function TableDrawer({ no, onClose }) {
               {table.partyId && <div><dt>Party</dt><dd className="mono">{table.partyId}</dd></div>}
               {table.state === 'seated' && <div><dt>Seated for</dt><dd className="mono">{table.seatedMinutes} min</dd></div>}
             </dl>
+            <SeatForm table={table} />
           </>
         )}
       </aside>
@@ -71,7 +115,8 @@ function TableDrawer({ no, onClose }) {
 
 /**
  * The floor: GET /branches/Baner/tables with the filters as query parameters. The filters live in the
- * address bar, so a floor can be linked to, and a value the backend refuses shows its refusal.
+ * address bar, so a floor can be linked to, and a value the backend refuses shows its refusal. Meera
+ * seats parties from a table.
  */
 export default function Floor() {
   const [params, setParams] = useSearchParams();
