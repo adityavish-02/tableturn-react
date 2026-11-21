@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import HandTicket from '../../components/HandTicket.jsx';
 import Icon from '../../components/Icon.jsx';
+import PartyNotebook from '../../components/PartyNotebook.jsx';
 import Problem from '../../components/Problem.jsx';
 import SectionTabs from '../../components/SectionTabs.jsx';
 import { formatTime } from '../../data/format.js';
@@ -9,7 +10,7 @@ import { BRANCH } from '../../data/restaurant.js';
 import { useApp, usePartyRecords } from '../../state/AppContext.jsx';
 
 /** The answer to "join the list": the party's number and place, or why not. */
-function JoinResult({ answer, sent, queue, onNext }) {
+function JoinResult({ answer, sent, queue, onOpen, onNext }) {
   if (!answer) {
     return (
       <div className="result result-idle">
@@ -20,7 +21,7 @@ function JoinResult({ answer, sent, queue, onNext }) {
     );
   }
   if (answer.status === 201) {
-    return <HandTicket key={answer.body.partyId} party={answer.body} queue={queue} onDone={onNext} />;
+    return <HandTicket key={answer.body.partyId} party={answer.body} queue={queue} onDone={onNext} onOpen={onOpen} />;
   }
   return <div className="result result-no"><Problem answer={answer} facts={sent} /></div>;
 }
@@ -37,6 +38,7 @@ export default function Waitlist() {
   const [answer, setAnswer] = useState(null);
   // what the form sent, so a refusal can say what to fix in each box
   const [sent, setSent] = useState(null);
+  const [openParty, setOpenParty] = useState(null);
 
   const records = usePartyRecords();
   const parties = records ?? [];
@@ -104,7 +106,7 @@ export default function Waitlist() {
         </form>
 
         <div className="result-slot">
-          <JoinResult answer={answer} sent={sent} queue={waiting} onNext={() => { setAnswer(null); setCovers(2); }} />
+          <JoinResult answer={answer} sent={sent} queue={waiting} onOpen={setOpenParty} onNext={() => { setAnswer(null); setCovers(2); }} />
         </div>
       </div>
 
@@ -119,10 +121,10 @@ export default function Waitlist() {
         ) : (
           <div className="table-card">
             <table className="table">
-              <thead><tr><th>Place</th><th>Party</th><th>Name</th><th>Covers</th><th>Joined</th><th>Quoted</th><th>Waiting</th></tr></thead>
+              <thead><tr><th>Place</th><th>Party</th><th>Name</th><th>Covers</th><th>Joined</th><th>Quoted</th><th>Waiting</th><th aria-label="Open" /></tr></thead>
               <tbody>
                 {waiting.map((p, i) => (
-                  <tr key={p.partyId} style={{ '--i': i }}>
+                  <tr key={p.partyId} className="is-openable" style={{ '--i': i }} onClick={() => setOpenParty(p.partyId)}>
                     <td className="mono strong">{p.position}</td>
                     <td className="mono">{p.partyId}</td>
                     <td>{p.name}</td>
@@ -130,6 +132,12 @@ export default function Waitlist() {
                     <td className="mono">{formatTime(Date.parse(p.joinedAt))}</td>
                     <td className="mono">{p.quotedMinutes} min</td>
                     <td className="mono">{Math.floor((now - Date.parse(p.joinedAt)) / 60000)} min</td>
+                    <td>
+                      <button type="button" className="row-link" aria-label={`Open ${p.partyId}'s record`}
+                        onClick={(e) => { e.stopPropagation(); setOpenParty(p.partyId); }}>
+                        <Icon name="arrow" size={16} />
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -143,10 +151,10 @@ export default function Waitlist() {
           <h2 id="done-title" className="section-title">Seated tonight <span className="section-count">{done.length}</span></h2>
           <div className="table-card">
             <table className="table">
-              <thead><tr><th>Party</th><th>Name</th><th>Covers</th><th>Table</th><th>Quoted</th><th>Waited</th><th>Now</th></tr></thead>
+              <thead><tr><th>Party</th><th>Name</th><th>Covers</th><th>Table</th><th>Quoted</th><th>Waited</th><th>Now</th><th aria-label="Open" /></tr></thead>
               <tbody>
                 {done.map((p, i) => (
-                  <tr key={p.partyId} style={{ '--i': i }}>
+                  <tr key={p.partyId} className="is-openable" style={{ '--i': i }} onClick={() => setOpenParty(p.partyId)}>
                     <td className="mono strong">{p.partyId}</td>
                     <td>{p.name}</td>
                     <td className="mono">{p.covers}</td>
@@ -154,6 +162,12 @@ export default function Waitlist() {
                     <td className="mono">{p.quotedMinutes} min</td>
                     <td className="mono">{p.waitedMinutes != null ? `${p.waitedMinutes} min` : '—'}</td>
                     <td><span className={`pill pill-${p.state === 'seated' ? 'holding' : p.state === 'cleared' ? 'ok' : 'muted'}`}>{p.state}</span></td>
+                    <td>
+                      <button type="button" className="row-link" aria-label={`Open ${p.partyId}'s record`}
+                        onClick={(e) => { e.stopPropagation(); setOpenParty(p.partyId); }}>
+                        <Icon name="arrow" size={16} />
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -161,6 +175,8 @@ export default function Waitlist() {
           </div>
         </section>
       )}
+
+      {openParty && <PartyNotebook key={openParty} id={openParty} onClose={() => setOpenParty(null)} />}
     </div>
   );
 }

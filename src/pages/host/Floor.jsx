@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import Dropdown from '../../components/Dropdown.jsx';
 import Icon from '../../components/Icon.jsx';
+import PartyNotebook from '../../components/PartyNotebook.jsx';
 import Problem from '../../components/Problem.jsx';
 import SectionTabs from '../../components/SectionTabs.jsx';
 import TableTop from '../../components/TableTop.jsx';
@@ -99,10 +100,14 @@ function StaffActions({ table }) {
  * One table, read on its own from GET /branches/Baner/tables/{no} (the number typed in the find box is sent as
  * text, so a slash or a % in it is still just a table that does not exist). ✕, a click outside or Esc closes it.
  */
-function TableDrawer({ no, mode, onClose }) {
+function TableDrawer({ no, mode, onClose, onOpenParty }) {
   const answer = useGet(`/branches/${BRANCH.code}/tables/${encodeURIComponent(no)}`);
   const closeRef = useRef(null);
   const table = answer?.status === 200 ? answer.body : null;
+  // the party this drawer has shown: after Clear the table names nobody, and its record is still there
+  const [seen, setSeen] = useState(null);
+  if (table?.partyId && table.partyId !== seen) setSeen(table.partyId);
+  const party = table?.partyId ?? seen;
 
   // The focus moves to ✕ when the drawer opens, and back where it was (the table, or the find box) when it closes.
   useEffect(() => {
@@ -137,6 +142,9 @@ function TableDrawer({ no, mode, onClose }) {
               {table.partyId && <div><dt>Party</dt><dd className="mono">{table.partyId}</dd></div>}
               {table.state === 'seated' && <div><dt>Seated for</dt><dd className="mono">{table.seatedMinutes} min</dd></div>}
             </dl>
+            {party && (
+              <button type="button" className="link-btn" onClick={() => onOpenParty(party)}>Open {party}'s record <Icon name="arrow" size={14} /></button>
+            )}
             {mode === 'host' ? <SeatForm table={table} /> : <StaffActions table={table} />}
           </>
         )}
@@ -153,6 +161,7 @@ function TableDrawer({ no, mode, onClose }) {
 export default function Floor({ mode }) {
   const [params, setParams] = useSearchParams();
   const [selected, setSelected] = useState(null);
+  const [openParty, setOpenParty] = useState(null);
   const [findText, setFindText] = useState('');
 
   const section = params.get('section') ?? '';
@@ -263,8 +272,10 @@ export default function Floor({ mode }) {
       </ul>
 
       {selected && (
-        <TableDrawer no={selected} mode={mode} onClose={() => setSelected(null)} />
+        <TableDrawer no={selected} mode={mode} onClose={() => setSelected(null)}
+          onOpenParty={(id) => { setSelected(null); setOpenParty(id); }} />
       )}
+      {openParty && <PartyNotebook key={openParty} id={openParty} onClose={() => setOpenParty(null)} />}
     </div>
   );
 }
